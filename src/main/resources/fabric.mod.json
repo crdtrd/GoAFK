@@ -7,22 +7,14 @@
   "authors": [],
   "contact": {},
   "license": "All-Rights-Reserved",
-  "icon": "assets/goafk/icon.png",
-  "environment": "*",
+  "environment": "server",
   "entrypoints": {
-    "client": [
-      "com.drtdrc.goafk.client.GoAFKClient"
-    ],
     "main": [
       "com.drtdrc.goafk.GoAFK"
     ]
   },
   "mixins": [
-    "goafk.mixins.json",
-    {
-      "config": "goafk.client.mixins.json",
-      "environment": "client"
-    }
+    "goafk.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${loader_version}",
