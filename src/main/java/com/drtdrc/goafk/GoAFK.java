@@ -15,6 +15,7 @@ public class GoAFK implements ModInitializer {
 
     @Override
     public void onInitialize() {
+
         // Register *all* your commands from one place, keep them in separate classes
         CommandRegistrationCallback.EVENT.register(AFKCommand::register);
         ServerLifecycleEvents.SERVER_STOPPING.register(AFKManager::clearAll);

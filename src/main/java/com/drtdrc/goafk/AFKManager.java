@@ -1,6 +1,7 @@
 
 package com.drtdrc.goafk;
 
+import net.minecraft.entity.Entity;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -18,38 +19,40 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class AFKManager {
     private AFKManager() {}
 
-    /** Active AFK ticket areas by player UUID. */
-    private static final Map<UUID, PlayerTicketArea> ACTIVE = new ConcurrentHashMap<>();
-
-    /** Safety clamp to avoid accidentally blanketing the world. */
-    private static final int MAX_RADIUS = 12; // chunks
-
-    /** Ticket level to use. Lower = higher priority. 1 is safe and strong. */
-    private static final int PLAYER_TICKET_LEVEL = 1;
-
+    private static final Map<UUID, Anchor> ACTIVE = new ConcurrentHashMap<>();
+    private static final int MAX_AREA_RADIUS = 12; // chunks
+    private static final int TICKET_LEVEL_RADIUS = 3;
     public static boolean toggleAfkAndKick(ServerPlayerEntity player) {
         UUID id = player.getUuid();
         MinecraftServer server = player.getServer();
         if (ACTIVE.containsKey(id)) {
-            PlayerTicketArea area = ACTIVE.remove(id);
-
-            area.removeTickets(Objects.requireNonNull(server));
-
+            Anchor a = ACTIVE.remove(id);
+            if (a != null) a.cleanup(Objects.requireNonNull(server));
             return false; // now disabled
         }
 
         ServerWorld world = player.getWorld();
         BlockPos pos = player.getBlockPos();
 
-        int view = Objects.requireNonNull(server).getPlayerManager().getViewDistance();
-        int sim  = server.getPlayerManager().getSimulationDistance();
-        int radius = Math.max(view, sim);
-        radius = Math.min(radius, MAX_RADIUS);
-        GoAFK.LOGGER.info(String.valueOf(radius));
+        int radius = Math.max(
+                Objects.requireNonNull(server).getPlayerManager().getViewDistance(),
+                server.getPlayerManager().getSimulationDistance()
+        );
+        radius = Math.min(radius, MAX_AREA_RADIUS);
 
-        PlayerTicketArea area = PlayerTicketArea.create(world, pos, radius);
-        area.addTickets(world);
-        ACTIVE.put(id, area);
+        ServerChunkManager cm = world.getChunkManager();
+        List<ChunkPos> chunks = new ArrayList<>();
+        ChunkPos center = new ChunkPos(pos);
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                ChunkPos cp = new ChunkPos(center.x + dx, center.z + dz);
+                chunks.add(cp);
+                cm.addTicket(ChunkTicketType.PLAYER_LOADING, cp, TICKET_LEVEL_RADIUS);
+                cm.addTicket(ChunkTicketType.PLAYER_SIMULATION, cp, TICKET_LEVEL_RADIUS);
+            }
+        }
+
+        ACTIVE.put(id, new Anchor(world.getRegistryKey(), pos.toImmutable(), chunks, TICKET_LEVEL_RADIUS));
 
         player.networkHandler.disconnect(Text.literal("AFK enabled.\n" +
                 "Chunks near your location are held with PLAYER tickets.\n" +
@@ -60,52 +63,39 @@ public final class AFKManager {
 
     /** Auto-clean on join. */
     public static void onPlayerJoin(ServerPlayerEntity player) {
-        PlayerTicketArea area = ACTIVE.remove(player.getUuid());
-        if (area != null) {
-            area.removeTickets(Objects.requireNonNull(player.getServer()));
-            player.sendMessage(Text.literal("Welcome back! Your AFK player tickets were removed."), false);
+        Anchor a = ACTIVE.remove(player.getUuid());
+        if (a != null) {
+            a.cleanup(Objects.requireNonNull(player.getServer()));
         }
     }
 
     /** Clean up on server stop. */
     public static void clearAll(MinecraftServer server) {
-        for (PlayerTicketArea a : ACTIVE.values()) a.removeTickets(server);
+        for (Anchor a : ACTIVE.values()) a.cleanup(server);
         ACTIVE.clear();
-        GoAFK.LOGGER.info("cleared load tickets");
     }
 
-    /** A square of chunks kept loaded by PLAYER tickets. */
-    private record PlayerTicketArea(RegistryKey<World> dimension, ChunkPos center, int radius, List<ChunkPos> chunks) {
-        static PlayerTicketArea create(ServerWorld world, BlockPos around, int radius) {
-            ChunkPos c = new ChunkPos(around);
-            List<ChunkPos> list = new ArrayList<>();
-            for (int dx = -radius; dx <= radius; dx++) {
-                for (int dz = -radius; dz <= radius; dz++) {
-                    list.add(new ChunkPos(c.x + dx, c.z + dz));
-                }
-            }
-            GoAFK.LOGGER.info("create complete");
-            return new PlayerTicketArea(world.getRegistryKey(), c, radius, list);
+    /** Exposed to mixins: all anchor positions in this world. */
+    public static List<BlockPos> getAnchorPositions(ServerWorld world) {
+        List<BlockPos> out = new ArrayList<>();
+        for (Anchor a : ACTIVE.values()) {
+            if (a.dim.equals(world.getRegistryKey())) out.add(a.pos);
         }
+        return out;
+    }
 
-        void addTickets(ServerWorld world) {
-            ServerChunkManager cm = world.getChunkManager();
-            for (ChunkPos cp : chunks) {
-                // Arg commonly equals the position; level=1 ensures strong loading.
-                cm.addTicket(ChunkTicketType.PLAYER_SIMULATION, cp, PLAYER_TICKET_LEVEL);
-
-            }
-            GoAFK.LOGGER.info("addTickets complete");
-        }
-
-        void removeTickets(MinecraftServer server) {
-            ServerWorld world = server.getWorld(dimension);
+    private record Anchor(RegistryKey<World> dim, BlockPos pos, List<ChunkPos> chunks, int ticketLevelRadius) {
+        void cleanup(MinecraftServer server) {
+            ServerWorld world = server.getWorld(dim);
             if (world == null) return;
+
+            // remove tickets
             ServerChunkManager cm = world.getChunkManager();
             for (ChunkPos cp : chunks) {
-                cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, cp, PLAYER_TICKET_LEVEL);
+                cm.removeTicket(ChunkTicketType.PLAYER_LOADING, cp, ticketLevelRadius);
+                cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, cp, ticketLevelRadius);
             }
-            GoAFK.LOGGER.info("remove tickets success");
+
         }
     }
 }

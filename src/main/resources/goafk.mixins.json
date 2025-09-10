@@ -4,6 +4,11 @@
   "package": "com.drtdrc.goafk.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "ServerChunkManagerMixin",
+    "ServerWorldMixin",
+    "SpawnHelperInfoInvoker",
+    "SpawnHelperInvokers",
+    "SpawnHelperMixin"
   ],
   "injectors": {
     "defaultRequire": 1
