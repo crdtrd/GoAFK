@@ -44,12 +44,29 @@ public final class AFKManager {
     }
 
     private static void removeTicketsAround(@NotNull ServerWorld world, BlockPos pos, int radius) {
+        var state = AFKAnchorsState.get(world);
         ServerChunkManager cm = world.getChunkManager();
+
+        // Build the set of chunks still covered by remaining anchors
+        Set<ChunkPos> keep = new HashSet<>();
+        for (BlockPos p : state.getAllPositions()) {
+            ChunkPos c = new ChunkPos(p);
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    keep.add(new ChunkPos(c.x + dx, c.z + dz));
+                }
+            }
+        }
+
+        // Now remove tickets only for chunks that are no longer covered
         ChunkPos center = new ChunkPos(pos);
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
-                cm.removeTicket(ChunkTicketType.PLAYER_LOADING, new ChunkPos(center.x + dx, center.z + dz), AFKManager.TICKET_LEVEL_RADIUS);
-                cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, new ChunkPos(center.x + dx, center.z + dz), AFKManager.TICKET_LEVEL_RADIUS);
+                ChunkPos cp = new ChunkPos(center.x + dx, center.z + dz);
+                if (!keep.contains(cp)) {
+                    cm.removeTicket(ChunkTicketType.PLAYER_LOADING, cp, TICKET_LEVEL_RADIUS);
+                    cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, cp, TICKET_LEVEL_RADIUS);
+                }
             }
         }
     }
@@ -76,7 +93,7 @@ public final class AFKManager {
         BlockPos pos = player.getBlockPos();
 
         // persist the anchor
-        AFKAnchorsState.get(world).add(pos);
+        AFKAnchorsState.get(world).add(pos, id);
 
         // create tickets now
         addTicketsAround(world, pos, radius);
@@ -90,34 +107,30 @@ public final class AFKManager {
     }
 
     public static void onPlayerJoin(@NotNull ServerPlayerEntity player) {
-        Anchor a = ACTIVE.remove(player.getUuid());
+        UUID id = player.getUuid();
+        MinecraftServer server = Objects.requireNonNull(player.getServer());
+
+        Anchor a = ACTIVE.remove(id);
         if (a != null) {
-            MinecraftServer server = Objects.requireNonNull(player.getServer());
             ServerWorld w = server.getWorld(a.dim);
             if (w != null) {
-                removeTicketsAround(w, a.pos, a.radiusChunks);
                 AFKAnchorsState.get(w).remove(a.pos);
+                removeTicketsAround(w, a.pos, a.radiusChunks);
+            }
+        }
+
+        int radius = computeRadius(server);
+        for (ServerWorld w : server.getWorlds()) {
+            var removed = AFKAnchorsState.get(w).removeAllByOwner(id);
+            for (BlockPos pos : removed) {
+                removeTicketsAround(w, pos, radius);
             }
         }
     }
 
-    /** Admin/API toggle: add/remove anchor and tickets at current block. */
-    public static boolean toggleAnchor(ServerWorld world, BlockPos pos) {
-        var state = AFKAnchorsState.get(world);
-        int radius = computeRadius(world.getServer());
-        if (state.contains(pos)) {
-            state.remove(pos);
-            removeTicketsAround(world, pos, radius);
-            return false;
-        } else {
-            state.add(pos);
-            addTicketsAround(world, pos, radius);
-            return true;
-        }
-    }
 
     public static @NotNull @Unmodifiable List<BlockPos> getAnchorPositions(ServerWorld world) {
-        return AFKAnchorsState.get(world).getAll();
+        return AFKAnchorsState.get(world).getAllPositions();
     }
 
     public record Anchor(RegistryKey<World> dim, BlockPos pos, int radiusChunks) {}

@@ -21,11 +21,8 @@ public class GoAFK implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             for (ServerWorld world : server.getWorlds()) {
-                var anchors = AFKAnchorsState.get(world).getAll();
-                int radius = Math.min(
-                        Math.max(server.getPlayerManager().getViewDistance(), server.getPlayerManager().getSimulationDistance()),
-                        AFKManager.computeRadius(server)
-                );
+                var anchors = AFKAnchorsState.get(world).getAllPositions();
+                int radius = AFKManager.computeRadius(server);
                 for (BlockPos pos : anchors) {
                     AFKManager.addTicketsAround(world, pos, radius);
                 }

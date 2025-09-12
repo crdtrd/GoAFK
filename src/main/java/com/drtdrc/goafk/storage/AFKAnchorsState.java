@@ -10,52 +10,82 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.PersistentState;
 import net.minecraft.world.PersistentStateType;
 
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public final class AFKAnchorsState extends PersistentState {
     public static final String ID = "goafk_anchors";
 
-    // Codec: store a simple list of BlockPos under "anchors"
+    // Store (pos, owner) and encode UUID as two longs (works on all mappings)
+    public static record Entry(BlockPos pos, UUID owner) {
+        public static final Codec<Entry> CODEC = RecordCodecBuilder.create(inst ->
+                inst.group(
+                        BlockPos.CODEC.fieldOf("pos").forGetter(Entry::pos),
+                        Codec.LONG.fieldOf("ownerMost").forGetter(e -> e.owner.getMostSignificantBits()),
+                        Codec.LONG.fieldOf("ownerLeast").forGetter(e -> e.owner.getLeastSignificantBits())
+                ).apply(inst, (pos, most, least) -> new Entry(pos, new UUID(most, least)))
+        );
+    }
+
     public static final Codec<AFKAnchorsState> CODEC = RecordCodecBuilder.create(inst ->
             inst.group(
-                    BlockPos.CODEC.listOf().optionalFieldOf("anchors", List.of()).forGetter(s -> s.anchors)
+                    Entry.CODEC.listOf().optionalFieldOf("anchors", List.of()).forGetter(s -> s.entries)
             ).apply(inst, AFKAnchorsState::new)
     );
 
     public static final PersistentStateType<AFKAnchorsState> TYPE =
             new PersistentStateType<>(ID, AFKAnchorsState::new, CODEC, DataFixTypes.SAVED_DATA_MAP_DATA);
 
-    private final ObjectArrayList<BlockPos> anchors;
+    private final ObjectArrayList<Entry> entries;
 
-    public AFKAnchorsState() { this.anchors = new ObjectArrayList<>(); }
-    private AFKAnchorsState(List<BlockPos> loaded) {
-        this.anchors = new ObjectArrayList<>(loaded);
-    }
+    public AFKAnchorsState() { this.entries = new ObjectArrayList<>(); }
+    private AFKAnchorsState(List<Entry> loaded) { this.entries = new ObjectArrayList<>(loaded); }
 
     public static AFKAnchorsState get(ServerWorld world) {
-        // Stored under <dimension>/data/goafk_anchors.dat
         return world.getPersistentStateManager().getOrCreate(TYPE);
     }
 
-    public List<BlockPos> getAll() {
-        return Collections.unmodifiableList(anchors);
+    public boolean isEmpty() { return entries.isEmpty(); }
+
+    /** Unmodifiable view of all entries. */
+    public List<Entry> getAllEntries() { return Collections.unmodifiableList(entries); }
+
+    /** Convenience: just positions (for existing call-sites that only need pos). */
+    public List<BlockPos> getAllPositions() {
+        return entries.stream().map(Entry::pos).toList();
     }
 
-    public boolean contains(BlockPos pos) { return anchors.contains(pos); }
+    public boolean contains(BlockPos pos) {
+        return entries.stream().anyMatch(e -> e.pos.equals(pos));
+    }
 
-    public boolean add(BlockPos pos) {
-        if (anchors.contains(pos)) return false;
-        anchors.add(pos.toImmutable());
+    public boolean add(BlockPos pos, UUID owner) {
+        // dedupe by exact pos+owner; also avoid duplicate pos by any owner (optional)
+        boolean exists = entries.stream().anyMatch(e -> e.pos.equals(pos) && e.owner.equals(owner));
+        if (exists) return false;
+        entries.add(new Entry(pos.toImmutable(), owner));
         this.markDirty();
         return true;
     }
 
     public boolean remove(BlockPos pos) {
-        boolean changed = anchors.remove(pos);
+        boolean changed = entries.removeIf(e -> e.pos.equals(pos));
         if (changed) this.markDirty();
         return changed;
     }
 
-    public boolean removeExact(BlockPos pos) { return remove(pos); } // alias if you like
+    /** Remove all anchors owned by this player, return the positions removed. */
+    public List<BlockPos> removeAllByOwner(UUID owner) {
+        List<BlockPos> removed = new ArrayList<>();
+        Iterator<Entry> it = entries.iterator();
+        while (it.hasNext()) {
+            Entry e = it.next();
+            if (e.owner.equals(owner)) {
+                removed.add(e.pos);
+                it.remove();
+            }
+        }
+        if (!removed.isEmpty()) this.markDirty();
+        return removed;
+    }
 }
