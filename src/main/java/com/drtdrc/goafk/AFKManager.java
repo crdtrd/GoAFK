@@ -1,17 +1,19 @@
 
 package com.drtdrc.goafk;
 
-import net.minecraft.entity.Entity;
+import com.drtdrc.goafk.storage.AFKAnchorsState;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.server.world.ServerChunkManager;
-import net.minecraft.server.world.ChunkTicketType; // <-- If your mappings call this TicketType, adjust import.
+import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,83 +21,104 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class AFKManager {
     private AFKManager() {}
 
-    private static final Map<UUID, Anchor> ACTIVE = new ConcurrentHashMap<>();
-    private static final int MAX_AREA_RADIUS = 12; // chunks
-    private static final int TICKET_LEVEL_RADIUS = 3;
-    public static boolean toggleAfkAndKick(ServerPlayerEntity player) {
+    public static final Map<UUID, Anchor> ACTIVE = new ConcurrentHashMap<>();
+    public static final int TICKET_LEVEL_RADIUS = 3;
+
+    public static int computeRadius(@NotNull MinecraftServer server) {
+        return Math.max(
+                server.getPlayerManager().getViewDistance(),
+                server.getPlayerManager().getSimulationDistance()
+        );
+    }
+
+    static void addTicketsAround(@NotNull ServerWorld world, BlockPos pos, int radius) {
+        ServerChunkManager cm = world.getChunkManager();
+        ChunkPos center = new ChunkPos(pos);
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                ChunkPos cp = new ChunkPos(center.x + dx, center.z + dz);
+                cm.addTicket(ChunkTicketType.PLAYER_LOADING, cp, TICKET_LEVEL_RADIUS);
+                cm.addTicket(ChunkTicketType.PLAYER_SIMULATION, cp, TICKET_LEVEL_RADIUS);
+            }
+        }
+    }
+
+    private static void removeTicketsAround(@NotNull ServerWorld world, BlockPos pos, int radius) {
+        ServerChunkManager cm = world.getChunkManager();
+        ChunkPos center = new ChunkPos(pos);
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                cm.removeTicket(ChunkTicketType.PLAYER_LOADING, new ChunkPos(center.x + dx, center.z + dz), AFKManager.TICKET_LEVEL_RADIUS);
+                cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, new ChunkPos(center.x + dx, center.z + dz), AFKManager.TICKET_LEVEL_RADIUS);
+            }
+        }
+    }
+
+    public static boolean toggleAfkAndKick(@NotNull ServerPlayerEntity player) {
         UUID id = player.getUuid();
         MinecraftServer server = player.getServer();
+        int radius = computeRadius(Objects.requireNonNull(server));
+
         if (ACTIVE.containsKey(id)) {
             Anchor a = ACTIVE.remove(id);
-            if (a != null) a.cleanup(Objects.requireNonNull(server));
+            if (a != null) {
+                // drop tickets from memory path
+                ServerWorld w = server.getWorld(a.dim);
+                if (w != null) {
+                    removeTicketsAround(w, a.pos, a.radiusChunks);
+                    AFKAnchorsState.get(w).remove(a.pos);
+                }
+            }
             return false; // now disabled
         }
 
         ServerWorld world = player.getWorld();
         BlockPos pos = player.getBlockPos();
 
-        int radius = Math.max(
-                Objects.requireNonNull(server).getPlayerManager().getViewDistance(),
-                server.getPlayerManager().getSimulationDistance()
-        );
-        radius = Math.min(radius, MAX_AREA_RADIUS);
+        // persist the anchor
+        AFKAnchorsState.get(world).add(pos);
 
-        ServerChunkManager cm = world.getChunkManager();
-        List<ChunkPos> chunks = new ArrayList<>();
-        ChunkPos center = new ChunkPos(pos);
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
-                ChunkPos cp = new ChunkPos(center.x + dx, center.z + dz);
-                chunks.add(cp);
-                cm.addTicket(ChunkTicketType.PLAYER_LOADING, cp, TICKET_LEVEL_RADIUS);
-                cm.addTicket(ChunkTicketType.PLAYER_SIMULATION, cp, TICKET_LEVEL_RADIUS);
-            }
-        }
+        // create tickets now
+        addTicketsAround(world, pos, radius);
 
-        ACTIVE.put(id, new Anchor(world.getRegistryKey(), pos.toImmutable(), chunks, TICKET_LEVEL_RADIUS));
+        // remember for auto-clean when they rejoin soon after
+        ACTIVE.put(id, new Anchor(world.getRegistryKey(), pos, radius));
 
-        player.networkHandler.disconnect(Text.literal("AFK enabled.\n" +
-                "Chunks near your location are held with PLAYER tickets.\n" +
-                "Rejoin to disable."));
+        player.networkHandler.disconnect(Text.literal("You are now AFK!"));
 
-        return true; // now enabled
+        return true;
     }
 
-    /** Auto-clean on join. */
-    public static void onPlayerJoin(ServerPlayerEntity player) {
+    public static void onPlayerJoin(@NotNull ServerPlayerEntity player) {
         Anchor a = ACTIVE.remove(player.getUuid());
         if (a != null) {
-            a.cleanup(Objects.requireNonNull(player.getServer()));
-        }
-    }
-
-    /** Clean up on server stop. */
-    public static void clearAll(MinecraftServer server) {
-        for (Anchor a : ACTIVE.values()) a.cleanup(server);
-        ACTIVE.clear();
-    }
-
-    /** Exposed to mixins: all anchor positions in this world. */
-    public static List<BlockPos> getAnchorPositions(ServerWorld world) {
-        List<BlockPos> out = new ArrayList<>();
-        for (Anchor a : ACTIVE.values()) {
-            if (a.dim.equals(world.getRegistryKey())) out.add(a.pos);
-        }
-        return out;
-    }
-
-    private record Anchor(RegistryKey<World> dim, BlockPos pos, List<ChunkPos> chunks, int ticketLevelRadius) {
-        void cleanup(MinecraftServer server) {
-            ServerWorld world = server.getWorld(dim);
-            if (world == null) return;
-
-            // remove tickets
-            ServerChunkManager cm = world.getChunkManager();
-            for (ChunkPos cp : chunks) {
-                cm.removeTicket(ChunkTicketType.PLAYER_LOADING, cp, ticketLevelRadius);
-                cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, cp, ticketLevelRadius);
+            MinecraftServer server = Objects.requireNonNull(player.getServer());
+            ServerWorld w = server.getWorld(a.dim);
+            if (w != null) {
+                removeTicketsAround(w, a.pos, a.radiusChunks);
+                AFKAnchorsState.get(w).remove(a.pos);
             }
-
         }
     }
+
+    /** Admin/API toggle: add/remove anchor and tickets at current block. */
+    public static boolean toggleAnchor(ServerWorld world, BlockPos pos) {
+        var state = AFKAnchorsState.get(world);
+        int radius = computeRadius(world.getServer());
+        if (state.contains(pos)) {
+            state.remove(pos);
+            removeTicketsAround(world, pos, radius);
+            return false;
+        } else {
+            state.add(pos);
+            addTicketsAround(world, pos, radius);
+            return true;
+        }
+    }
+
+    public static @NotNull @Unmodifiable List<BlockPos> getAnchorPositions(ServerWorld world) {
+        return AFKAnchorsState.get(world).getAll();
+    }
+
+    public record Anchor(RegistryKey<World> dim, BlockPos pos, int radiusChunks) {}
 }
