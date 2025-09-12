@@ -9,6 +9,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.PersistentState;
 import net.minecraft.world.PersistentStateType;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -47,10 +48,8 @@ public final class AFKAnchorsState extends PersistentState {
 
     public boolean isEmpty() { return entries.isEmpty(); }
 
-    /** Unmodifiable view of all entries. */
     public List<Entry> getAllEntries() { return Collections.unmodifiableList(entries); }
 
-    /** Convenience: just positions (for existing call-sites that only need pos). */
     public List<BlockPos> getAllPositions() {
         return entries.stream().map(Entry::pos).toList();
     }
@@ -74,8 +73,7 @@ public final class AFKAnchorsState extends PersistentState {
         return changed;
     }
 
-    /** Remove all anchors owned by this player, return the positions removed. */
-    public List<BlockPos> removeAllByOwner(UUID owner) {
+    public @NotNull List<BlockPos> removeAllByOwner(UUID owner) {
         List<BlockPos> removed = new ArrayList<>();
         Iterator<Entry> it = entries.iterator();
         while (it.hasNext()) {
