@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class AFKManager {
     private AFKManager() {}
 
-    public static final Map<UUID, Anchor> ACTIVE = new ConcurrentHashMap<>();
+    public static final Map<String, Anchor> ACTIVE = new ConcurrentHashMap<>(); // not sure I really need this
     public static final int TICKET_LEVEL_RADIUS = 3;
 
     public static int computeRadius(@NotNull MinecraftServer server) {
@@ -37,8 +37,7 @@ public final class AFKManager {
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
                 ChunkPos cp = new ChunkPos(center.x + dx, center.z + dz);
-                cm.addTicket(ChunkTicketType.PLAYER_LOADING, cp, TICKET_LEVEL_RADIUS);
-                cm.addTicket(ChunkTicketType.PLAYER_SIMULATION, cp, TICKET_LEVEL_RADIUS);
+                cm.addTicket(ChunkTicketType.FORCED, cp, TICKET_LEVEL_RADIUS);
             }
         }
     }
@@ -64,43 +63,23 @@ public final class AFKManager {
             for (int dz = -radius; dz <= radius; dz++) {
                 ChunkPos cp = new ChunkPos(center.x + dx, center.z + dz);
                 if (!keep.contains(cp)) {
-                    cm.removeTicket(ChunkTicketType.PLAYER_LOADING, cp, TICKET_LEVEL_RADIUS);
-                    cm.removeTicket(ChunkTicketType.PLAYER_SIMULATION, cp, TICKET_LEVEL_RADIUS);
+                    cm.removeTicket(ChunkTicketType.FORCED, cp, TICKET_LEVEL_RADIUS);
                 }
             }
         }
     }
 
     public static boolean goAFKAndKick(@NotNull ServerPlayerEntity player) {
-        UUID id = player.getUuid();
         MinecraftServer server = player.getServer();
         int radius = computeRadius(Objects.requireNonNull(server));
-
-        // im fairly certain this is not needed but still will test its absence
-//        if (ACTIVE.containsKey(id)) {
-//            Anchor a = ACTIVE.remove(id);
-//            if (a != null) {
-//                // drop tickets from memory path
-//                ServerWorld w = server.getWorld(a.dim);
-//                if (w != null) {
-//                    removeTicketsAround(w, a.pos, a.radiusChunks);
-//                    AFKAnchorsState.get(w).remove(a.pos);
-//                }
-//            }
-//            return false; // now disabled
-//        }
-
         ServerWorld world = player.getWorld();
         BlockPos pos = player.getBlockPos();
+        String playerName = player.getGameProfile().getName();
 
-        // persist the anchor
-        AFKAnchorsState.get(world).add(pos, id);
-
-        // create tickets now
-        addTicketsAround(world, pos, radius);
+        addAnchor(world, pos, playerName);
 
         // remember for auto-clean when they rejoin soon after
-        ACTIVE.put(id, new Anchor(world.getRegistryKey(), pos, radius));
+        ACTIVE.put(playerName, new Anchor(world.getRegistryKey(), pos, radius));
 
         player.networkHandler.disconnect(Text.literal("You are now AFK!"));
 
@@ -108,10 +87,9 @@ public final class AFKManager {
     }
 
     public static void onPlayerJoin(@NotNull ServerPlayerEntity player) {
-        UUID id = player.getUuid();
         MinecraftServer server = Objects.requireNonNull(player.getServer());
-
-        Anchor a = ACTIVE.remove(id);
+        String playerName = player.getGameProfile().getName();
+        Anchor a = ACTIVE.remove(playerName);
         if (a != null) {
             ServerWorld w = server.getWorld(a.dim);
             if (w != null) {
@@ -122,7 +100,7 @@ public final class AFKManager {
 
         int radius = computeRadius(server);
         for (ServerWorld w : server.getWorlds()) {
-            var removed = AFKAnchorsState.get(w).removeAllByOwner(id);
+            var removed = AFKAnchorsState.get(w).removeAllByOwner(playerName);
             for (BlockPos pos : removed) {
                 removeTicketsAround(w, pos, radius);
             }
@@ -130,19 +108,19 @@ public final class AFKManager {
     }
 
 
+
     public static @NotNull @Unmodifiable List<BlockPos> getAnchorPositions(ServerWorld world) {
         return AFKAnchorsState.get(world).getAllPositions();
     }
 
-    // Admin explicit add/remove (optionally owned by someone).
-    public static boolean addAdminAnchor(ServerWorld world, BlockPos pos, UUID ownerOrNull) {
+    public static boolean addAnchor(ServerWorld world, BlockPos pos, String ownerOrNull) {
         var state = AFKAnchorsState.get(world);
         if (!state.add(pos, ownerOrNull)) return false;
         addTicketsAround(world, pos, computeRadius(world.getServer()));
         return true;
     }
 
-    public static boolean removeAdminAnchor(ServerWorld world, BlockPos pos) {
+    public static boolean removeAnchor(ServerWorld world, BlockPos pos) {
         var state = AFKAnchorsState.get(world);
         if (!state.remove(pos)) return false;
         removeTicketsAround(world, pos, computeRadius(world.getServer()));

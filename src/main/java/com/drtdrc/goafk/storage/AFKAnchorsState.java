@@ -17,14 +17,12 @@ import java.util.stream.Collectors;
 public final class AFKAnchorsState extends PersistentState {
     public static final String ID = "goafk_anchors";
 
-    // Store (pos, owner) and encode UUID as two longs (works on all mappings)
-    public static record Entry(BlockPos pos, UUID owner) {
+    public record Entry(BlockPos pos, String owner) {
         public static final Codec<Entry> CODEC = RecordCodecBuilder.create(inst ->
                 inst.group(
                         BlockPos.CODEC.fieldOf("pos").forGetter(Entry::pos),
-                        Codec.LONG.fieldOf("ownerMost").forGetter(e -> e.owner.getMostSignificantBits()),
-                        Codec.LONG.fieldOf("ownerLeast").forGetter(e -> e.owner.getLeastSignificantBits())
-                ).apply(inst, (pos, most, least) -> new Entry(pos, new UUID(most, least)))
+                        Codec.STRING.optionalFieldOf("owner", null).forGetter(e -> e.owner)
+                ).apply(inst, Entry::new)
         );
     }
 
@@ -46,19 +44,13 @@ public final class AFKAnchorsState extends PersistentState {
         return world.getPersistentStateManager().getOrCreate(TYPE);
     }
 
-    public boolean isEmpty() { return entries.isEmpty(); }
-
     public List<Entry> getAllEntries() { return Collections.unmodifiableList(entries); }
 
     public List<BlockPos> getAllPositions() {
         return entries.stream().map(Entry::pos).toList();
     }
 
-    public boolean contains(BlockPos pos) {
-        return entries.stream().anyMatch(e -> e.pos.equals(pos));
-    }
-
-    public boolean add(BlockPos pos, UUID owner) {
+    public boolean add(BlockPos pos, String owner) {
         // dedupe by exact pos+owner; also avoid duplicate pos by any owner (optional)
         boolean exists = entries.stream().anyMatch(e -> e.pos.equals(pos) && e.owner.equals(owner));
         if (exists) return false;
@@ -73,12 +65,15 @@ public final class AFKAnchorsState extends PersistentState {
         return changed;
     }
 
-    public @NotNull List<BlockPos> removeAllByOwner(UUID owner) {
+    public @NotNull List<BlockPos> removeAllByOwner(String owner) {
+        if (owner == null || owner.isBlank()) return Collections.emptyList();
+
         List<BlockPos> removed = new ArrayList<>();
         Iterator<Entry> it = entries.iterator();
         while (it.hasNext()) {
             Entry e = it.next();
-            if (e.owner.equals(owner)) {
+            String o = e.owner;
+            if (o != null && o.equals(owner)) {
                 removed.add(e.pos);
                 it.remove();
             }
@@ -86,4 +81,5 @@ public final class AFKAnchorsState extends PersistentState {
         if (!removed.isEmpty()) this.markDirty();
         return removed;
     }
+
 }
