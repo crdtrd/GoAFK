@@ -7,8 +7,8 @@ import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.GameRules;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -19,7 +19,9 @@ import java.util.function.BooleanSupplier;
 
 @Mixin(ServerWorld.class)
 public abstract class ServerWorldMixin {
+    @Unique
     private static final int MIN_RING = 2; // 24 / 16
+    @Unique
     private static final int MAX_RING = 8; // 128 / 16
 
     @Inject(method = "canSpawnEntitiesAt(Lnet/minecraft/util/math/ChunkPos;)Z",
@@ -46,19 +48,20 @@ public abstract class ServerWorldMixin {
 
         List<BlockPos> anchors = AFKManager.getAnchorPositions(world);
         if (anchors.isEmpty()) return;
-
+        int steps = 12;
+        int count = 3;
         for (BlockPos p : anchors) {
             double x = p.getX() + 0.5, y = p.getY() + 1.2, z = p.getZ() + 0.5;
             // small ring
-            int steps = 12;
+
             for (int i = 0; i < steps; i++) {
                 double a = (i / (double)steps) * Math.PI * 2;
                 double rx = x + Math.cos(a) * 0.3;
                 double rz = z + Math.sin(a) * 0.3;
-                world.spawnParticles(ParticleTypes.SOUL_FIRE_FLAME, rx, y, rz, 5, 0, 0.3, 0, 0);
+                world.spawnParticles(ParticleTypes.SOUL_FIRE_FLAME, rx, y, rz, count, 0, 0.3, 0, 0);
             }
             // a little core sparkle
-            world.spawnParticles(ParticleTypes.SOUL_FIRE_FLAME, x, y, z, 5, 0.0, 0.3, 0.0, 0.0);
+            world.spawnParticles(ParticleTypes.SOUL_FIRE_FLAME, x, y, z, count, 0.0, 0.3, 0.0, 0.0);
         }
     }
 }

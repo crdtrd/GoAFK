@@ -5,7 +5,6 @@ import com.drtdrc.goafk.storage.AFKAnchorsState;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnReason;
 import net.minecraft.entity.decoration.DisplayEntity;
-import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -16,21 +15,20 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.World;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 public final class AFKManager {
     private AFKManager() {}
 
     public static final int TICKET_LEVEL_RADIUS = 3;
-    private static final Map<RegistryKey<World>, Map<BlockPos, UUID>> LABELS = new ConcurrentHashMap<>();
 
-    public static void spawnAnchorLabel(ServerWorld world, BlockPos pos, @Nullable String name) {
+    public static String getDefaultName(BlockPos pos) {
+        return pos.getX() + " " + pos.getY() + " " + pos.getZ();
+    }
+    public static void spawnAnchorLabel(ServerWorld world, BlockPos pos, String name) {
 
         DisplayEntity.TextDisplayEntity label = EntityType.TEXT_DISPLAY.create(world, SpawnReason.CHUNK_GENERATION);
         if (label == null) return;
@@ -43,8 +41,7 @@ public final class AFKManager {
         label.setGlowing(true);
         label.setBackground(0x40000000);
         label.setLineWidth(140);
-        String text = (name == null || name.equals("Unnamed")) ? pos.toShortString() : (name);
-        label.setText(Text.literal(text).formatted(Formatting.WHITE));
+        label.setText(Text.literal(name).formatted(Formatting.WHITE));
 
         world.spawnEntity(label);
     }
@@ -57,8 +54,7 @@ public final class AFKManager {
         for (DisplayEntity.TextDisplayEntity td :
                 world.getEntitiesByClass(DisplayEntity.TextDisplayEntity.class, search, tde -> {
                     String tdeText = tde.getText().getString();
-                    if (tdeText.equals(name)) return true;
-                    return name.equals("Unnamed") && tdeText.equals(pos.toShortString());
+                    return tdeText.equals(name);
                 })) {
                 td.discard();
             }
@@ -143,7 +139,7 @@ public final class AFKManager {
     public static boolean removeAnchor(ServerWorld world, BlockPos pos, String name) {
 
         var anchorState = AFKAnchorsState.get(world);
-        List<AFKAnchorsState.AFKAnchor> afkAnchorsToRemove = anchorState.removeAll(pos, name);
+        List<AFKAnchorsState.AFKAnchor> afkAnchorsToRemove = anchorState.removeAnchor(pos, name);
         if (afkAnchorsToRemove.isEmpty()) return false;
         for (AFKAnchorsState.AFKAnchor a : afkAnchorsToRemove) {
             BlockPos p = a.pos();
