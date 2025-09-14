@@ -12,69 +12,59 @@ import net.minecraft.world.PersistentStateType;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 public final class AFKAnchorsState extends PersistentState {
     public static final String ID = "goafk_anchors";
 
-    public record Entry(BlockPos pos, String owner) {
-        public static final Codec<Entry> CODEC = RecordCodecBuilder.create(inst ->
+    public record AFKAnchor(BlockPos pos, String name) {
+        public static final Codec<AFKAnchor> CODEC = RecordCodecBuilder.create(inst ->
                 inst.group(
-                        BlockPos.CODEC.fieldOf("pos").forGetter(Entry::pos),
-                        Codec.STRING.optionalFieldOf("owner", null).forGetter(e -> e.owner)
-                ).apply(inst, Entry::new)
+                        BlockPos.CODEC.fieldOf("pos").forGetter(AFKAnchor::pos),
+                        Codec.STRING.optionalFieldOf("name", null).forGetter(e -> e.name)
+                ).apply(inst, AFKAnchor::new)
         );
     }
 
     public static final Codec<AFKAnchorsState> CODEC = RecordCodecBuilder.create(inst ->
             inst.group(
-                    Entry.CODEC.listOf().optionalFieldOf("anchors", List.of()).forGetter(s -> s.entries)
+                    AFKAnchor.CODEC.listOf().optionalFieldOf("anchors", List.of()).forGetter(s -> s.afkAnchors)
             ).apply(inst, AFKAnchorsState::new)
     );
 
     public static final PersistentStateType<AFKAnchorsState> TYPE =
             new PersistentStateType<>(ID, AFKAnchorsState::new, CODEC, DataFixTypes.SAVED_DATA_MAP_DATA);
 
-    private final ObjectArrayList<Entry> entries;
+    private final ObjectArrayList<AFKAnchor> afkAnchors;
 
-    public AFKAnchorsState() { this.entries = new ObjectArrayList<>(); }
-    private AFKAnchorsState(List<Entry> loaded) { this.entries = new ObjectArrayList<>(loaded); }
+    public AFKAnchorsState() { this.afkAnchors = new ObjectArrayList<>(); }
+    private AFKAnchorsState(List<AFKAnchor> loaded) { this.afkAnchors = new ObjectArrayList<>(loaded); }
 
     public static AFKAnchorsState get(ServerWorld world) {
         return world.getPersistentStateManager().getOrCreate(TYPE);
     }
 
-    public List<Entry> getAllEntries() { return Collections.unmodifiableList(entries); }
+    public List<AFKAnchor> getAllEntries() { return Collections.unmodifiableList(afkAnchors); }
 
     public List<BlockPos> getAllPositions() {
-        return entries.stream().map(Entry::pos).toList();
+        return afkAnchors.stream().map(AFKAnchor::pos).toList();
     }
 
-    public boolean add(BlockPos pos, String owner) {
-        // dedupe by exact pos+owner; also avoid duplicate pos by any owner (optional)
-        boolean exists = entries.stream().anyMatch(e -> e.pos.equals(pos) && e.owner.equals(owner));
+    public boolean add(BlockPos pos, String name) {
+        // dedupe by exact pos+name; also avoid duplicate pos by any name (optional)
+        boolean exists = afkAnchors.stream().anyMatch(e -> e.pos.equals(pos) && e.name.equals(name));
         if (exists) return false;
-        entries.add(new Entry(pos.toImmutable(), owner));
+        afkAnchors.add(new AFKAnchor(pos.toImmutable(), name));
         this.markDirty();
         return true;
     }
 
-    public boolean remove(BlockPos pos) {
-        boolean changed = entries.removeIf(e -> e.pos.equals(pos));
-        if (changed) this.markDirty();
-        return changed;
-    }
-
-    public @NotNull List<BlockPos> removeAllByOwner(String owner) {
-        if (owner == null || owner.isBlank()) return Collections.emptyList();
-
-        List<BlockPos> removed = new ArrayList<>();
-        Iterator<Entry> it = entries.iterator();
+    public List<AFKAnchor> removeAll(BlockPos pos, String name) {
+        List<AFKAnchor> removed = new ArrayList<>();
+        Iterator<AFKAnchor> it = afkAnchors.iterator();
         while (it.hasNext()) {
-            Entry e = it.next();
-            String o = e.owner;
-            if (o != null && o.equals(owner)) {
-                removed.add(e.pos);
+            AFKAnchor afkAnchor = it.next();
+            if (afkAnchor.pos.equals(pos) || (afkAnchor.name.equals(name) && !name.isEmpty())) {
+                removed.add(afkAnchor);
                 it.remove();
             }
         }

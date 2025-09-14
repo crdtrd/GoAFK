@@ -6,7 +6,6 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.command.argument.BlockPosArgumentType;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -52,7 +51,7 @@ public final class AFKCommand {
                                         .executes(ctx -> {
                                             var src = ctx.getSource();
                                             BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
-                                            boolean ok = AFKManager.addAnchor(src.getWorld(), pos, null);
+                                            boolean ok = AFKManager.addAnchor(src.getWorld(), pos, "");
                                             src.sendFeedback(() -> literal(ok ? "Anchor added" : "Anchor already exists here"), true);
                                             return ok ? 1 : 0;
                                         })
@@ -62,34 +61,28 @@ public final class AFKCommand {
                         .then(CommandManager.literal("remove")
                                 .then(CommandManager.literal("pos")
                                         .then(CommandManager.argument("pos", BlockPosArgumentType.blockPos())
-                                                .suggests(ANCHOR_POS_SUGGESTIONS)
+                                                .suggests(POS_SUGGESTIONS)
                                                 .executes(ctx -> {
                                                     var src = ctx.getSource();
                                                     BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
-                                                    boolean ok = AFKManager.removeAnchor(src.getWorld(), pos);
+                                                    boolean ok = AFKManager.removeAnchor(src.getWorld(), pos, "");
                                                     if (ok) src.sendFeedback(() -> literal("Anchor removed"), true);
                                                     else    src.sendError(literal("No anchor at this position"));
                                                     return ok ? 1 : 0;
                                                 })
                                         )
                                 )
-                                .then(CommandManager.literal("player")
+                                .then(CommandManager.literal("name")
                                         .then(CommandManager.argument("name", StringArgumentType.word())
-                                                .suggests(PLAYER_NAME_SUGGESTIONS)
+                                                .suggests(NAME_SUGGESTIONS)
                                                 .executes(ctx -> {
                                                     var src = ctx.getSource();
                                                     var world = src.getWorld();
                                                     String name = StringArgumentType.getString(ctx, "name");
-                                                    List<BlockPos> anchorPos = AFKAnchorsState.get(world).removeAllByOwner(name);
-                                                    if (anchorPos.isEmpty()) {
-                                                        src.sendError(Text.literal("No anchors found for " + name + " in this world"));
-                                                        return 0;
-                                                    }
-                                                    for (BlockPos p : anchorPos) {
-                                                        AFKManager.removeTicketsAround(world, p, AFKManager.computeRadius(src.getServer()));
-                                                    }
-                                                    src.sendFeedback(() -> Text.literal("Removed anchor for " + name), true);
-                                                    return 1;
+                                                    boolean ok = AFKManager.removeAnchor(world, null, name);
+                                                    if (ok) src.sendFeedback(() -> Text.literal("Removed anchors named " + name), true);
+                                                    else src.sendError(Text.literal("No anchors named " + name + " in this world"));
+                                                    return ok ? 1 : 0;
                                                 })
                                         )
                                 )
@@ -103,7 +96,7 @@ public final class AFKCommand {
                                                 return 0;
                                             }
                                             for (BlockPos p : pos) {
-                                                AFKManager.removeAnchor(world, p);
+                                                AFKManager.removeAnchor(world, p, "");
                                             }
                                             src.sendFeedback(() -> Text.literal("All anchors removed"), true);
                                             return 1;
@@ -114,42 +107,29 @@ public final class AFKCommand {
         );
     }
 
-    private static final SuggestionProvider<ServerCommandSource> ANCHOR_POS_SUGGESTIONS = (ctx, builder) -> {
+    private static final SuggestionProvider<ServerCommandSource> POS_SUGGESTIONS = (ctx, builder) -> {
         ServerWorld world = ctx.getSource().getWorld();
         var state = AFKAnchorsState.get(world);
-        for (AFKAnchorsState.Entry e : state.getAllEntries()) {
+        for (AFKAnchorsState.AFKAnchor e : state.getAllEntries()) {
             var p = e.pos();
             String suggestion = p.getX() + " " + p.getY() + " " + p.getZ();
-            Text tooltip = Objects.equals(e.owner(), null)
+            Text tooltip = Objects.equals(e.name(), null)
                     ? Text.literal("unowned")
-                    : Text.literal("owner: " + e.owner());
+                    : Text.literal("name: " + e.name());
             builder.suggest(suggestion, tooltip);
         }
         return builder.buildFuture();
     };
 
-    private static final SuggestionProvider<ServerCommandSource> PLAYER_NAME_SUGGESTIONS = (ctx, builder) -> {
-        Set<String> names = new HashSet<>();
-        MinecraftServer server = ctx.getSource().getServer();
+    private static final SuggestionProvider<ServerCommandSource> NAME_SUGGESTIONS = (ctx, builder) -> {
         ServerWorld world = ctx.getSource().getWorld();
 
-        // owners in state
         for (var e : AFKAnchorsState.get(world).getAllEntries()) {
-            String owner = e.owner();
+            String owner = e.name();
             if (owner != null && !owner.isBlank()) {
-                names.add(owner);
+                builder.suggest(owner);
             }
         }
-
-        // online players
-        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
-            String n = p.getGameProfile().getName();
-            if (n != null && !n.isBlank()) {
-                names.add(n);
-            }
-        }
-
-        for (String n : names) builder.suggest(n);
         return builder.buildFuture();
     };
 

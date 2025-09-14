@@ -2,6 +2,10 @@
 package com.drtdrc.goafk;
 
 import com.drtdrc.goafk.storage.AFKAnchorsState;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.SpawnReason;
+import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -9,10 +13,12 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.server.world.ServerChunkManager;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
@@ -21,8 +27,49 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class AFKManager {
     private AFKManager() {}
 
-    public static final Map<String, Anchor> ACTIVE = new ConcurrentHashMap<>(); // not sure I really need this
     public static final int TICKET_LEVEL_RADIUS = 3;
+    private static final Map<RegistryKey<World>, Map<BlockPos, UUID>> LABELS = new ConcurrentHashMap<>();
+    public static Map<BlockPos, UUID> labelsFor(RegistryKey<World> dim) {
+        return LABELS.computeIfAbsent(dim, key -> new ConcurrentHashMap<>());
+    }
+
+    public static void spawnAnchorLabel(ServerWorld world, BlockPos pos, @Nullable String name) {
+        final Map<BlockPos, UUID> map = labelsFor(world.getRegistryKey());
+        final BlockPos key = pos.toImmutable();
+
+        UUID existing = map.get(key);
+        if (existing != null) {
+            Entity e = world.getEntity(existing);
+            if (e instanceof DisplayEntity.TextDisplayEntity) return;
+            map.remove(key);
+        }
+
+        DisplayEntity.TextDisplayEntity label = EntityType.TEXT_DISPLAY.create(world, SpawnReason.CHUNK_GENERATION);
+        if (label == null) return;
+
+        label.refreshPositionAndAngles(pos.getX() + 0.5, pos.getY() + 1.4, pos.getZ() + 0.5, 0f, 0f);
+        label.setNoGravity(true);
+        label.setSilent(true);
+        label.setInvulnerable(true);
+        label.setBillboardMode(DisplayEntity.BillboardMode.CENTER);
+        label.setGlowing(true);
+        label.setBackground(0x40000000);
+        label.setLineWidth(140);
+        String text = (name == null || name.isBlank()) ? "Anchor" : (name);
+        label.setText(Text.literal(text).formatted(Formatting.WHITE));
+
+        world.spawnEntity(label);
+        map.put(key, label.getUuid());
+    }
+
+    private static void removeAnchorLabel(ServerWorld world, BlockPos pos) {
+        final Map<BlockPos, UUID> map = labelsFor(world.getRegistryKey());
+        final BlockPos key = pos.toImmutable();
+        UUID id = map.remove(key);
+        Entity e = world.getEntity(id);
+        if (id != null && e != null) e.discard();
+
+    }
 
     public static int computeRadius(@NotNull MinecraftServer server) {
         return Math.max(
@@ -57,7 +104,7 @@ public final class AFKManager {
             }
         }
 
-        // Now remove tickets only for chunks that are no longer covered
+        // Now removeAllByPosition tickets only for chunks that are no longer covered
         ChunkPos center = new ChunkPos(pos);
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
@@ -70,16 +117,11 @@ public final class AFKManager {
     }
 
     public static boolean goAFKAndKick(@NotNull ServerPlayerEntity player) {
-        MinecraftServer server = player.getServer();
-        int radius = computeRadius(Objects.requireNonNull(server));
         ServerWorld world = player.getWorld();
         BlockPos pos = player.getBlockPos();
         String playerName = player.getGameProfile().getName();
 
         addAnchor(world, pos, playerName);
-
-        // remember for auto-clean when they rejoin soon after
-        ACTIVE.put(playerName, new Anchor(world.getRegistryKey(), pos, radius));
 
         player.networkHandler.disconnect(Text.literal("You are now AFK!"));
 
@@ -87,45 +129,36 @@ public final class AFKManager {
     }
 
     public static void onPlayerJoin(@NotNull ServerPlayerEntity player) {
-        MinecraftServer server = Objects.requireNonNull(player.getServer());
         String playerName = player.getGameProfile().getName();
-        Anchor a = ACTIVE.remove(playerName);
-        if (a != null) {
-            ServerWorld w = server.getWorld(a.dim);
-            if (w != null) {
-                AFKAnchorsState.get(w).remove(a.pos);
-                removeTicketsAround(w, a.pos, a.radiusChunks);
-            }
-        }
-
-        int radius = computeRadius(server);
-        for (ServerWorld w : server.getWorlds()) {
-            var removed = AFKAnchorsState.get(w).removeAllByOwner(playerName);
-            for (BlockPos pos : removed) {
-                removeTicketsAround(w, pos, radius);
-            }
-        }
+        BlockPos pos = player.getBlockPos();
+        ServerWorld world = player.getWorld();
+        removeAnchor(world, pos, playerName);
     }
-
-
 
     public static @NotNull @Unmodifiable List<BlockPos> getAnchorPositions(ServerWorld world) {
         return AFKAnchorsState.get(world).getAllPositions();
     }
 
-    public static boolean addAnchor(ServerWorld world, BlockPos pos, String ownerOrNull) {
+    public static boolean addAnchor(ServerWorld world, BlockPos pos, String name) {
         var state = AFKAnchorsState.get(world);
-        if (!state.add(pos, ownerOrNull)) return false;
+        if (!state.add(pos, name)) return false;
         addTicketsAround(world, pos, computeRadius(world.getServer()));
+        spawnAnchorLabel(world, pos, name);
         return true;
     }
 
-    public static boolean removeAnchor(ServerWorld world, BlockPos pos) {
-        var state = AFKAnchorsState.get(world);
-        if (!state.remove(pos)) return false;
-        removeTicketsAround(world, pos, computeRadius(world.getServer()));
+    public static boolean removeAnchor(ServerWorld world, BlockPos pos, String name) {
+
+        var anchorState = AFKAnchorsState.get(world);
+        List<AFKAnchorsState.AFKAnchor> afkAnchorsToRemove = anchorState.removeAll(pos, name);
+        if (afkAnchorsToRemove.isEmpty()) return false;
+        for (AFKAnchorsState.AFKAnchor a : afkAnchorsToRemove) {
+            BlockPos p = a.pos();
+            removeTicketsAround(world, p, computeRadius(world.getServer()));
+            removeAnchorLabel(world, p);
+        }
         return true;
     }
 
-    public record Anchor(RegistryKey<World> dim, BlockPos pos, int radiusChunks) {}
+
 }
