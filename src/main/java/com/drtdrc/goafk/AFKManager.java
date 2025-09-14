@@ -2,7 +2,6 @@
 package com.drtdrc.goafk;
 
 import com.drtdrc.goafk.storage.AFKAnchorsState;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnReason;
 import net.minecraft.entity.decoration.DisplayEntity;
@@ -15,6 +14,7 @@ import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.jetbrains.annotations.NotNull;
@@ -29,25 +29,13 @@ public final class AFKManager {
 
     public static final int TICKET_LEVEL_RADIUS = 3;
     private static final Map<RegistryKey<World>, Map<BlockPos, UUID>> LABELS = new ConcurrentHashMap<>();
-    public static Map<BlockPos, UUID> labelsFor(RegistryKey<World> dim) {
-        return LABELS.computeIfAbsent(dim, key -> new ConcurrentHashMap<>());
-    }
 
     public static void spawnAnchorLabel(ServerWorld world, BlockPos pos, @Nullable String name) {
-        final Map<BlockPos, UUID> map = labelsFor(world.getRegistryKey());
-        final BlockPos key = pos.toImmutable();
-
-        UUID existing = map.get(key);
-        if (existing != null) {
-            Entity e = world.getEntity(existing);
-            if (e instanceof DisplayEntity.TextDisplayEntity) return;
-            map.remove(key);
-        }
 
         DisplayEntity.TextDisplayEntity label = EntityType.TEXT_DISPLAY.create(world, SpawnReason.CHUNK_GENERATION);
         if (label == null) return;
 
-        label.refreshPositionAndAngles(pos.getX() + 0.5, pos.getY() + 1.4, pos.getZ() + 0.5, 0f, 0f);
+        label.refreshPositionAndAngles(pos.getX() + 0.5, pos.getY() + 2.1, pos.getZ() + 0.5, 0f, 0f);
         label.setNoGravity(true);
         label.setSilent(true);
         label.setInvulnerable(true);
@@ -55,20 +43,25 @@ public final class AFKManager {
         label.setGlowing(true);
         label.setBackground(0x40000000);
         label.setLineWidth(140);
-        String text = (name == null || name.isBlank()) ? "Anchor" : (name);
+        String text = (name == null || name.equals("Unnamed")) ? pos.toShortString() : (name);
         label.setText(Text.literal(text).formatted(Formatting.WHITE));
 
         world.spawnEntity(label);
-        map.put(key, label.getUuid());
     }
 
-    private static void removeAnchorLabel(ServerWorld world, BlockPos pos) {
-        final Map<BlockPos, UUID> map = labelsFor(world.getRegistryKey());
-        final BlockPos key = pos.toImmutable();
-        UUID id = map.remove(key);
-        Entity e = world.getEntity(id);
-        if (id != null && e != null) e.discard();
-
+    private static void removeAnchorLabel(ServerWorld world, BlockPos pos, String name) {
+        Box search = new Box(
+                pos.getX() + 0.4, pos.getY(), pos.getZ() + 0.4,
+                pos.getX() + 0.6, pos.getY() + 3.0, pos.getZ() + 0.6
+        );
+        for (DisplayEntity.TextDisplayEntity td :
+                world.getEntitiesByClass(DisplayEntity.TextDisplayEntity.class, search, tde -> {
+                    String tdeText = tde.getText().getString();
+                    if (tdeText.equals(name)) return true;
+                    return name.equals("Unnamed") && tdeText.equals(pos.toShortString());
+                })) {
+                td.discard();
+            }
     }
 
     public static int computeRadius(@NotNull MinecraftServer server) {
@@ -155,7 +148,7 @@ public final class AFKManager {
         for (AFKAnchorsState.AFKAnchor a : afkAnchorsToRemove) {
             BlockPos p = a.pos();
             removeTicketsAround(world, p, computeRadius(world.getServer()));
-            removeAnchorLabel(world, p);
+            removeAnchorLabel(world, p, a.name());
         }
         return true;
     }

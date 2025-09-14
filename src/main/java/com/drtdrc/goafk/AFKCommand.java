@@ -37,13 +37,12 @@ public final class AFKCommand {
         dispatcher.register(CommandManager.literal("afk")
                 .then(CommandManager.literal("anchor")
                         .requires(src -> src.hasPermissionLevel(src.getServer().getOpPermissionLevel())) // ops
-                        // /afk anchor add [x y z] [for <player>] | [forUuid <uuid>]
                         .then(CommandManager.literal("add")
                                 .executes(ctx -> {
                                     var src = ctx.getSource();
                                     var world = src.getWorld();
                                     BlockPos pos = BlockPos.ofFloored(src.getPosition());
-                                    boolean ok = AFKManager.addAnchor(world, pos, null);
+                                    boolean ok = AFKManager.addAnchor(world, pos, "-");
                                     src.sendFeedback(() -> literal(ok ? "Anchor added at your feet" : "Anchor already exists here"), true);
                                     return ok ? 1 : 0;
                                 })
@@ -51,13 +50,25 @@ public final class AFKCommand {
                                         .executes(ctx -> {
                                             var src = ctx.getSource();
                                             BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
-                                            boolean ok = AFKManager.addAnchor(src.getWorld(), pos, "");
+                                            boolean ok = AFKManager.addAnchor(src.getWorld(), pos, "Unnamed");
                                             src.sendFeedback(() -> literal(ok ? "Anchor added" : "Anchor already exists here"), true);
                                             return ok ? 1 : 0;
                                         })
+                                        .then(CommandManager.argument("name", StringArgumentType.string())
+                                            .executes(ctx -> {
+                                                var src = ctx.getSource();
+                                                BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
+                                                String name = StringArgumentType.getString(ctx, "name");
+                                                boolean ok = AFKManager.addAnchor(src.getWorld(), pos, name);
+                                                src.sendFeedback(() -> literal(ok ? "Anchor added" : "Anchor already exists here"), true);
+                                                return ok ? 1 : 0;
+                                            })
+                                        )
                                 )
                         )
                         // /afk anchor remove [x y z]
+
+                        //.TODO: COMBINE POS AND NAME
                         .then(CommandManager.literal("remove")
                                 .then(CommandManager.literal("pos")
                                         .then(CommandManager.argument("pos", BlockPosArgumentType.blockPos())
@@ -65,7 +76,7 @@ public final class AFKCommand {
                                                 .executes(ctx -> {
                                                     var src = ctx.getSource();
                                                     BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
-                                                    boolean ok = AFKManager.removeAnchor(src.getWorld(), pos, "");
+                                                    boolean ok = AFKManager.removeAnchor(src.getWorld(), pos, "Unnamed");
                                                     if (ok) src.sendFeedback(() -> literal("Anchor removed"), true);
                                                     else    src.sendError(literal("No anchor at this position"));
                                                     return ok ? 1 : 0;

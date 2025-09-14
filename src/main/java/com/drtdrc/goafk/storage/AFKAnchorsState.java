@@ -59,17 +59,40 @@ public final class AFKAnchorsState extends PersistentState {
     }
 
     public List<AFKAnchor> removeAll(BlockPos pos, String name) {
+        // pos is passed in as null when searching by name
+        final boolean hasPos = pos != null;
+        // Unnamed is a name that indicates you didn't name it
+        final boolean hasName = !name.equals("Unnamed");
+
         List<AFKAnchor> removed = new ArrayList<>();
         Iterator<AFKAnchor> it = afkAnchors.iterator();
         while (it.hasNext()) {
-            AFKAnchor afkAnchor = it.next();
-            if (afkAnchor.pos.equals(pos) || (afkAnchor.name.equals(name) && !name.isEmpty())) {
-                removed.add(afkAnchor);
+            AFKAnchor a = it.next();
+
+            // TODO: Explain WTF is going on here
+            boolean match = (hasPos && hasName)
+                    ? (a.pos.equals(pos) && a.name.equals(name)) : (hasPos)
+                    ? a.pos.equals(pos) : hasName && a.name.equals(name);
+            boolean recreation;
+            if (hasPos && hasName) { // return from afk
+                recreation = a.pos.equals(pos) && a.name.equals(name);
+            }
+            else if (hasPos) {
+                recreation = a.pos.equals(pos);
+            }
+            else {
+                recreation = hasName && a.name.equals(name);
+            }
+
+
+            if (match) {
+                removed.add(a);
                 it.remove();
             }
         }
         if (!removed.isEmpty()) this.markDirty();
         return removed;
     }
+
 
 }
