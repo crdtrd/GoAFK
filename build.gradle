@@ -16,7 +16,6 @@ loom {
     mods {
         "goafk" {
             sourceSet sourceSets.main
-            sourceSet sourceSets.client
         }
     }
 }
