@@ -6,7 +6,9 @@
   "icon": "assets/goafk/icon.png",
   "description": "Adds the /afk command and replaces the player with an AFK anchor that simulates chunks like the player would.",
   "authors": ["crdtrd"],
-  "contact": {},
+  "contact": {
+    "issues": "https://github.com/crdtrd/GoAFK/issues"
+  },
   "license": "MIT",
   "environment": "server",
   "entrypoints": {
