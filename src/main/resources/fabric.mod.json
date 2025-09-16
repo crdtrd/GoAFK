@@ -3,10 +3,11 @@
   "id": "goafk",
   "version": "${version}",
   "name": "GoAFK",
-  "description": "",
-  "authors": [],
+  "icon": "assets/goafk/icon.png",
+  "description": "Adds the /afk command and replaces the player with an AFK anchor that simulates chunks like the player would.",
+  "authors": ["crdtrd"],
   "contact": {},
-  "license": "All-Rights-Reserved",
+  "license": "MIT",
   "environment": "server",
   "entrypoints": {
     "main": [
