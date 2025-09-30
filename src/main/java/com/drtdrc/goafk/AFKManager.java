@@ -106,9 +106,9 @@ public final class AFKManager {
     }
 
     public static boolean goAFKAndKick(@NotNull ServerPlayerEntity player) {
-        ServerWorld world = player.getWorld();
+        ServerWorld world = player.getEntityWorld();
         BlockPos pos = player.getBlockPos();
-        String playerName = player.getGameProfile().getName();
+        String playerName = player.getGameProfile().name();
 
         addAnchor(world, pos, playerName);
 
@@ -118,9 +118,9 @@ public final class AFKManager {
     }
 
     public static void onPlayerJoin(@NotNull ServerPlayerEntity player) {
-        String playerName = player.getGameProfile().getName();
+        String playerName = player.getGameProfile().name();
         BlockPos pos = player.getBlockPos();
-        ServerWorld world = player.getWorld();
+        ServerWorld world = player.getEntityWorld();
         removeAnchor(world, pos, playerName);
     }
 
