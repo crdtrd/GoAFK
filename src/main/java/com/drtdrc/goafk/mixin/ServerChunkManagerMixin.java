@@ -3,19 +3,16 @@ package com.drtdrc.goafk.mixin;
 
 import com.drtdrc.goafk.AFKManager;
 
-import net.minecraft.entity.Entity;
 import net.minecraft.server.world.ServerChunkManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.profiler.Profiler;
-import net.minecraft.world.SpawnDensityCapper;
-import net.minecraft.world.SpawnHelper;
 import net.minecraft.world.chunk.WorldChunk;
 import org.spongepowered.asm.mixin.*;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.HashSet;
@@ -36,21 +33,16 @@ public abstract class ServerChunkManagerMixin {
     @Mutable
     @Shadow private List<WorldChunk> spawningChunks;
 
-    @Redirect(
+    @ModifyArg(
             method = "tickChunks(Lnet/minecraft/util/profiler/Profiler;J)V",
             at = @At(
                     value = "INVOKE",
                     target = "Lnet/minecraft/world/SpawnHelper;setupSpawn(ILjava/lang/Iterable;Lnet/minecraft/world/SpawnHelper$ChunkSource;Lnet/minecraft/world/SpawnDensityCapper;)Lnet/minecraft/world/SpawnHelper$Info;"
-            )
+            ),
+            index = 0
     )
-    private SpawnHelper.Info goafk$setupSpawnAddAnchors(
-            int spawningChunkCount,
-            Iterable<Entity> entities,
-            SpawnHelper.ChunkSource chunkSource,
-            SpawnDensityCapper capper
-    ) {
-        int extra = countAnchorSpawningChunks();
-        return SpawnHelper.setupSpawn(spawningChunkCount + extra, entities, chunkSource, capper);
+    private int goafk$increaseSpawningCount(int spawningChunkCount) {
+        return spawningChunkCount + countAnchorSpawningChunks();
     }
 
     @Unique
